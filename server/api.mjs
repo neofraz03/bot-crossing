@@ -282,13 +282,16 @@ function send(res, status, body) {
 
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1'])
 
+if (process.env.BOT_CROSSING_HOST) {
+  LOCAL_HOSTS.add(process.env.BOT_CROSSING_HOST)
+}
 // The machine's own LAN addresses count as local too, so the colony can be
 // served to the home network with BOT_CROSSING_HOST set. Harmless when bound
 // to loopback (those hosts can't reach the server anyway), and the Host +
 // Origin pairing still stops DNS rebinding and CSRF exactly as before.
 for (const addrs of Object.values(os.networkInterfaces())) {
   for (const a of addrs || []) {
-    if (a && a.family === 'IPv4' && !a.internal && a.address) LOCAL_HOSTS.add(a.address)
+    if (a && a.family === 'IPv4' && a.address) LOCAL_HOSTS.add(a.address)
   }
 }
 
@@ -321,11 +324,21 @@ function hostnameOf(value) {
  * POST is rejected; pass `-H 'Origin: http://localhost:5274'` if you are scripting this.
  */
 function isLocalRequest(req) {
-  if (!LOCAL_HOSTS.has(hostnameOf(req.headers.host))) return false
+  const host = hostnameOf(req.headers.host);
+  
+  // Allow localhost, loopback, and standard private LAN ranges (192.168.x.x, 10.x.x.x, 172.16-31.x.x)
+  const isPrivateIP = /^192\.168\./.test(host) || 
+                      /^10\./.test(host) || 
+                      /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host);
 
-  const origin = req.headers.origin
-  if (origin && origin !== 'null') return LOCAL_HOSTS.has(hostnameOf(origin))
-  return req.method === 'GET' || req.method === 'HEAD'
+  if (LOCAL_HOSTS.has(host) || isPrivateIP) {
+    const origin = req.headers.origin;
+    if (!origin || origin === 'null') return req.method === 'GET' || req.method === 'HEAD';
+    const originHost = hostnameOf(origin);
+    return LOCAL_HOSTS.has(originHost) || /^192\.168\./.test(originHost) || /^10\./.test(originHost) || /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(originHost);
+  }
+
+  return false;
 }
 
 function readJsonBody(req, limit = 4 * 1024 * 1024) {
